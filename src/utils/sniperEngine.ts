@@ -617,7 +617,7 @@ export function deriveStrategyRuntimeStatus(
   if (!sniperMetrics.strikeReliable) {
     return {
       phaseLabel: `等待本周期开盘价确认`,
-      detailText: `尚未取得官方 Strike（Chainlink 开盘秒报价），确认前不自动狙击 · 剩余 ${sniperMetrics.remainSec}s`,
+      detailText: `尚未取得官方 Strike（Chainlink BTC/USD 60s TWAP），确认前不自动狙击 · 剩余 ${sniperMetrics.remainSec}s`,
       tone: 'slate',
       activeHoldCount,
       winRatePct,

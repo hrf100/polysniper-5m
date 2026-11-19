@@ -12,8 +12,8 @@ Polymarket BTC 5m Up/Down 二元盘的「深虚值反转」**模拟**交易终�
 
 - 入场：剩余 65–245s、劣势方卖一 ≤ `maxEntryCents`、翻转分 ≥ `minReversalScore`、单周期限 1 笔。
 - 自动入场与半仓抽本**只使用实盘 CLOB 报价**；CLOB 不可用时仅显示模型估算价，不成交。临近结算时必胜方无卖单视为 99¢，劣势方真实卖一仍有效。
-- Strike / 结算价与 Polymarket 页面「目标价格」同源：Chainlink 在开盘/收盘那一秒的报价。优先取 RTDS 中时间戳精确等于边界秒的报价，缺失时回退官方接口 `polymarket.com/api/crypto/crypto-price`（中途启动也能立即取得）。Strike 确认前不自动狙击。
-- 结算按每笔交易自身 Strike；15 分钟内仍取不到官方收盘价的持仓按「未翻转」保守记账。
+- Strike / 结算价与 Polymarket 官方规则同源：**Chainlink BTC/USD 60 秒 TWAP** 在开盘秒 / 收盘秒的取值（不是瞬时 Chainlink / 交易所现货）。优先 Vatic `targets/timestamp`（与 Gamma `priceToBeat` 一致），本地秒级均价仅作临时显示。官方 TWAP 确认前不自动狙击。
+- 结算按每笔交易自身 Strike；15 分钟内仍取不到官方 TWAP 收盘价的持仓按「未翻转」保守记账。
 - 时间窗口按 Binance 事件时间校准，本地时钟偏差不影响开/收盘判定。
 
 ## 本地开发

@@ -38,13 +38,13 @@ const BASIS_RING_SIZE = 180;
 const MAX_CHART_POINTS = 150;
 const MAX_LEDGER_RECORDS = 500;
 const MAX_KLINES = 40;
-// Strike/settlement = Chainlink report stamped exactly at the window boundary,
-// identical to Polymarket's crypto-price openPrice/closePrice. RTDS delivers it
-// ~1s late; the official endpoint is the fallback (mid-window start, feed gaps).
+// Polymarket settles BTC 5m on Chainlink BTC/USD *60s TWAP* at the boundary
+// seconds — NOT the plain Chainlink spot tick (that disagrees ~11% of rounds).
 const CHAINLINK_HISTORY_SEC = 900;
-const OFFICIAL_PRICE_DELAY_SEC = 2;
+const TWAP_WINDOW_SEC = 60;
+const OFFICIAL_TWAP_DELAY_SEC = 2;
 const OFFICIAL_RETRY_MS = 5000;
-const OFFICIAL_CACHE_MAX = 50;
+const OFFICIAL_CACHE_MAX = 80;
 const SETTLE_GIVE_UP_SEC = 900;
 const CLOB_STALE_MS = 5000;
 const FETCH_TIMEOUT_MS = 6000;
@@ -149,8 +149,9 @@ export class StrategyService {
   private sniperMetrics: SniperMetrics | null = null;
 
   private chainlinkBySec = new Map<number, number>();
-  private officialPrices = new Map<number, { open: number | null; close: number | null }>();
-  private officialLastTryMs = new Map<number, number>();
+  /** Official Chainlink TWAP60 at a Unix second (Vatic / Gamma priceToBeat). */
+  private twapOfficialBySec = new Map<number, number>();
+  private twapLastTryMs = new Map<number, number>();
   private chainlinkWs: WebSocket | null = null;
   private binanceWs: WebSocket | null = null;
   private chainlinkLastMsgMs = 0;
@@ -436,48 +437,83 @@ export class StrategyService {
     }
   }
 
+  /** Simple average of our Chainlink spot seconds — provisional only until official TWAP arrives. */
+  private computeLocalTwap60(sec: number): number | null {
+    let sum = 0;
+    let n = 0;
+    for (let t = sec - (TWAP_WINDOW_SEC - 1); t <= sec; t++) {
+      const v = this.chainlinkBySec.get(t);
+      if (v !== undefined) {
+        sum += v;
+        n += 1;
+      }
+    }
+    return n >= TWAP_WINDOW_SEC - 5 ? sum / n : null;
+  }
+
+  private rememberOfficialTwap(sec: number, price: number): void {
+    if (!(price > 0)) return;
+    this.twapOfficialBySec.set(sec, price);
+    while (this.twapOfficialBySec.size > OFFICIAL_CACHE_MAX) {
+      const oldest = this.twapOfficialBySec.keys().next().value;
+      if (oldest === undefined) break;
+      this.twapOfficialBySec.delete(oldest);
+      this.twapLastTryMs.delete(oldest);
+    }
+  }
+
+  /** TWAP60 at window open (= Polymarket "Price to Beat"). */
   private windowOpenPrice(win: number): number | null {
-    return (
-      this.chainlinkBySec.get(win) ??
-      this.officialPrices.get(win)?.open ??
-      this.officialPrices.get(win - WINDOW_DURATION_SEC)?.close ??
-      null
-    );
+    return this.twapOfficialBySec.get(win) ?? this.computeLocalTwap60(win);
   }
 
+  /** TWAP60 at window close (= next window's price to beat). */
   private windowClosePrice(win: number): number | null {
-    return (
-      this.chainlinkBySec.get(win + WINDOW_DURATION_SEC) ??
-      this.officialPrices.get(win)?.close ??
-      this.officialPrices.get(win + WINDOW_DURATION_SEC)?.open ??
-      null
-    );
+    return this.twapOfficialBySec.get(win + WINDOW_DURATION_SEC) ?? this.computeLocalTwap60(win + WINDOW_DURATION_SEC);
   }
 
-  /** Throttled background fetch of Polymarket's official open/close for a window. */
-  private requestOfficialPrices(win: number): void {
+  private hasOfficialTwap(sec: number): boolean {
+    return this.twapOfficialBySec.has(sec);
+  }
+
+  /**
+   * Fetch official TWAP60 at an exact boundary second.
+   * Primary: Vatic targets API (matches Gamma priceToBeat).
+   * Secondary: Gamma eventMetadata.priceToBeat for that market open.
+   */
+  private requestOfficialTwap(boundarySec: number): void {
     const nowMs = Date.now();
-    if (nowMs - (this.officialLastTryMs.get(win) ?? 0) < OFFICIAL_RETRY_MS) return;
-    this.officialLastTryMs.set(win, nowMs);
-    const iso = (s: number) => new Date(s * 1000).toISOString().replace('.000Z', 'Z');
-    const url =
-      `https://polymarket.com/api/crypto/crypto-price?symbol=BTC&variant=fiveminute` +
-      `&eventStartTime=${iso(win)}&endDate=${iso(win + WINDOW_DURATION_SEC)}`;
-    this.fetchJson(url)
+    if (nowMs - (this.twapLastTryMs.get(boundarySec) ?? 0) < OFFICIAL_RETRY_MS) return;
+    this.twapLastTryMs.set(boundarySec, nowMs);
+
+    const vaticUrl =
+      `https://api.vatic.trading/api/v1/targets/timestamp?asset=btc&type=5min&timestamp=${boundarySec}`;
+    this.fetchJson(vaticUrl)
       .then((raw) => {
-        const data = raw as { openPrice?: unknown; closePrice?: unknown };
-        const num = (v: unknown) => (typeof v === 'number' && v > 0 ? v : null);
-        this.officialPrices.set(win, { open: num(data.openPrice), close: num(data.closePrice) });
-        while (this.officialPrices.size > OFFICIAL_CACHE_MAX) {
-          const oldest = this.officialPrices.keys().next().value;
-          if (oldest === undefined) break;
-          this.officialPrices.delete(oldest);
-          this.officialLastTryMs.delete(oldest);
+        const data = raw as { price?: unknown; requestedTimestamp?: unknown };
+        const price = Number(data.price);
+        const reqTs = Number(data.requestedTimestamp);
+        // Reject live-"now" remaps; only exact boundary stamps are settlement-grade.
+        if (reqTs === boundarySec && price > 0) {
+          this.rememberOfficialTwap(boundarySec, price);
+          return;
         }
+        return this.fetchGammaPriceToBeat(boundarySec);
       })
-      .catch(() => {
-        // retried on a later tick
-      });
+      .catch(() => this.fetchGammaPriceToBeat(boundarySec));
+  }
+
+  private async fetchGammaPriceToBeat(openSec: number): Promise<void> {
+    try {
+      const slug = `btc-updown-5m-${openSec}`;
+      const evs = (await this.fetchJson(
+        `https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(slug)}`
+      )) as Array<{ eventMetadata?: { priceToBeat?: number } }>;
+      const ptb = Number(evs?.[0]?.eventMetadata?.priceToBeat);
+      if (ptb > 0) this.rememberOfficialTwap(openSec, ptb);
+    } catch {
+      // retried on a later tick
+    }
   }
 
   private connectBinance(attempt: number): void {
@@ -791,18 +827,22 @@ export class StrategyService {
     }
 
     if (!prices.strikeResolved) {
-      const exactStrike = this.windowOpenPrice(currentWinStart);
-      if (exactStrike === null && elapsedSec >= OFFICIAL_PRICE_DELAY_SEC) {
-        this.requestOfficialPrices(currentWinStart);
+      if (elapsedSec >= OFFICIAL_TWAP_DELAY_SEC) {
+        this.requestOfficialTwap(currentWinStart);
       }
-      if (exactStrike !== null) {
-        prices.strike = exactStrike;
+      const twapStrike = this.windowOpenPrice(currentWinStart);
+      if (twapStrike !== null) {
+        const official = this.hasOfficialTwap(currentWinStart);
+        prices.strike = twapStrike;
         prices.strikeBootstrappedFromSpot = false;
-        prices.strikeReliable = true;
-        prices.strikeResolved = true;
-        console.log(`[strategy] Strike ${currentWinStart} = ${exactStrike}`);
-        resetSeries = true;
-        this.lastChartSampleSec = -2;
+        // Only auto-snipe once the official TWAP60 price-to-beat is confirmed.
+        prices.strikeReliable = official;
+        if (official) {
+          prices.strikeResolved = true;
+          console.log(`[strategy] Strike(TWAP60) ${currentWinStart} = ${twapStrike}`);
+          resetSeries = true;
+          this.lastChartSampleSec = -2;
+        }
       }
     }
 
@@ -901,17 +941,27 @@ export class StrategyService {
     }
     for (const win of dueWindows) {
       const closeSec = win + WINDOW_DURATION_SEC;
-      const settlePrice = this.windowClosePrice(win);
+      if (nowSec - closeSec >= OFFICIAL_TWAP_DELAY_SEC) {
+        this.requestOfficialTwap(closeSec); // close TWAP = next open
+        this.requestOfficialTwap(win); // ensure open TWAP cached for audits
+      }
+      // Settlement-grade close only — never plain Chainlink spot.
+      const settlePrice = this.hasOfficialTwap(closeSec)
+        ? this.twapOfficialBySec.get(closeSec)!
+        : null;
       if (settlePrice !== null) {
         const { updatedLedger, cashSettled } = settleExpiredTrades(this.tradeLedger, settlePrice, win);
         this.applyLedger(updatedLedger, cashSettled);
+        const openTwap = this.twapOfficialBySec.get(win);
+        const side = settlePrice >= (openTwap ?? settlePrice) ? 'UP' : 'DOWN';
+        console.log(
+          `[strategy] Settle(TWAP60) ${win}: open=${openTwap ?? '?'} close=${settlePrice} → ${side}`
+        );
       } else if (nowSec - closeSec > SETTLE_GIVE_UP_SEC) {
         this.applyLedger(
-          expireTradesWhere(this.tradeLedger, (tr) => tr.windowStartSec === win, '未取得官方收盘价'),
+          expireTradesWhere(this.tradeLedger, (tr) => tr.windowStartSec === win, '未取得官方 TWAP60 收盘价'),
           0
         );
-      } else if (nowSec - closeSec >= OFFICIAL_PRICE_DELAY_SEC) {
-        this.requestOfficialPrices(win);
       }
     }
   }
