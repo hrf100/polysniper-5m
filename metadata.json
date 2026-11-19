@@ -1,0 +1,6 @@
+{
+  "name": "Polymarket BTC 5m Sub-10c Sniper Terminal",
+  "description": "Real-time Polymarket 5-minute BTC binary market reversal sniper and $5 unit two-stage free-roll simulation terminal with Chainlink oracle tracking and EIP-712 CLOB authentication.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
