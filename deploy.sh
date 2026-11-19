@@ -6,7 +6,7 @@
 # Optional env:
 #   REPO_URL=https://github.com/OWNER/REPO.git
 #   INSTALL_DIR=/opt/polysniper
-#   PORT=3000
+#   PORT=8080
 #   AUTH_PASSWORD=qq111111
 #   BRANCH=main
 set -euo pipefail
@@ -17,7 +17,7 @@ REPO_URL="${REPO_URL:-$DEFAULT_REPO_URL}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/polysniper}"
 BRANCH="${BRANCH:-main}"
 SERVICE_NAME="${SERVICE_NAME:-polysniper}"
-PORT="${PORT:-3000}"
+PORT="${PORT:-8080}"
 AUTH_PASSWORD="${AUTH_PASSWORD:-qq111111}"
 DISPLAY_TZ="${DISPLAY_TZ:-Asia/Shanghai}"
 NODE_MAJOR=22

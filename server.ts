@@ -20,7 +20,7 @@ import { StrategyService } from './strategyService';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 8080);
 // `npm run build` bundles this file into ./server.js, which always serves dist/.
 const isProduction = process.env.NODE_ENV === 'production' || !__filename.endsWith('.ts');
 const distDir = path.resolve(__dirname, 'dist');

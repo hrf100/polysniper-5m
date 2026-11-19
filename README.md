@@ -22,7 +22,7 @@ Polymarket BTC 5m Up/Down 二元盘的「深虚值反转」**模拟**交易终�
 
 ```bash
 npm install
-npm run dev        # http://localhost:3000，默认密码 qq111111
+npm run dev        # http://localhost:8080，默认密码 qq111111
 npm test           # 单元测试
 npm run lint       # 类型检查
 ```
@@ -35,12 +35,12 @@ npm run lint       # 类型检查
 curl -fsSL https://raw.githubusercontent.com/hrf100/polysniper-5m/main/deploy.sh | sudo bash
 ```
 
-脚本会自动：安装 Node 22、必要时加 1G swap、克隆仓库、构建、写入 systemd、启动服务。安装目录默认 `/opt/polysniper`，端口 `3000`，默认密码 `qq111111`。
+脚本会自动：安装 Node 22、必要时加 1G swap、克隆仓库、构建、写入 systemd、启动服务。安装目录默认 `/opt/polysniper`，端口 `8080`，默认密码 `qq111111`。
 
 常用覆盖：
 
 ```bash
-AUTH_PASSWORD='你的密码' PORT=3000 \
+AUTH_PASSWORD='你的密码' PORT=8080 \
   curl -fsSL https://raw.githubusercontent.com/hrf100/polysniper-5m/main/deploy.sh | sudo bash
 ```
 
@@ -54,7 +54,7 @@ AUTH_PASSWORD='你的密码' PORT=3000 \
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `PORT` | `3000` | 监听端口 |
+| `PORT` | `8080` | 监听端口 |
 | `AUTH_PASSWORD` | `qq111111` | 访问密码，修改后所有会话失效 |
 | `AUTH_SECRET` | 空 | 可选，混入会话签名 |
 | `TRUST_PROXY` | `loopback` | 仅信任本机反代的 `X-Forwarded-For` |
