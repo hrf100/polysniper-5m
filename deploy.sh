@@ -179,17 +179,47 @@ EOF
   systemctl restart "$SERVICE_NAME"
 }
 
+# Prefer a public IPv4 (cloud VPS hostname -I is often only the private NIC).
+detect_public_ip() {
+  local ip=""
+  for url in \
+    "https://api.ipify.org" \
+    "https://ifconfig.me/ip" \
+    "https://icanhazip.com"; do
+    ip=$(curl -4 -fsS --max-time 3 "$url" 2>/dev/null | tr -d '[:space:]' || true)
+    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "$ip"
+      return
+    fi
+  done
+  # Fall back to first non-RFC1918 address on the host, else first address.
+  ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | awk '
+    $1 ~ /^10\./ { next }
+    $1 ~ /^192\.168\./ { next }
+    $1 ~ /^172\.(1[6-9]|2[0-9]|3[0-1])\./ { next }
+    NF { print $1; exit }
+  ')
+  if [[ -z "$ip" ]]; then
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  fi
+  echo "${ip:-YOUR_PUBLIC_IP}"
+}
+
 print_done() {
-  local ip
-  ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  local public_ip private_ip
+  public_ip=$(detect_public_ip)
+  private_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
   echo
   echo "=============================================="
   echo " PolySniper deployed"
   echo " Dir:      $INSTALL_DIR"
   echo " Service:  systemctl status $SERVICE_NAME"
-  echo " URL:      http://${ip:-SERVER_IP}:$PORT"
+  echo " URL:      http://${public_ip}:$PORT"
+  if [[ -n "$private_ip" && "$private_ip" != "$public_ip" ]]; then
+    echo " Private:  http://${private_ip}:$PORT  (VPC only)"
+  fi
   echo " Password: (see $INSTALL_DIR/.env AUTH_PASSWORD)"
-  echo " Update:   curl -fsSL .../deploy.sh | sudo bash"
+  echo " Update:   curl -fsSL https://raw.githubusercontent.com/hrf100/polysniper-5m/main/deploy.sh | sudo bash"
   echo "=============================================="
 }
 
