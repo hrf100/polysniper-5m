@@ -1,5 +1,5 @@
-import React from 'react';
-import { Activity, RotateCcw } from 'lucide-react';
+import React, { useCallback } from 'react';
+import { Activity, Download, RotateCcw } from 'lucide-react';
 import type {
   LedgerFilter,
   SimTradeRecord,
@@ -33,6 +33,77 @@ function getStatusMeta(status: TradeStatus): { label: string; className: string 
     case 'LOSS_STOPPED':
       return { label: '未翻转止损', className: 'text-rose-400' };
   }
+}
+
+function csvEscape(value: string | number | boolean | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  const raw = String(value);
+  if (/[",\r\n]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
+  return raw;
+}
+
+function buildLedgerCsv(rows: SimTradeRecord[]): string {
+  const headers = [
+    'ID',
+    '盘口时段',
+    '窗口Unix秒',
+    '建仓时间',
+    '方向',
+    '买入价(¢)',
+    '投入($)',
+    '初始份额',
+    '剩余份额',
+    'Strike',
+    '建仓现货',
+    '翻转分',
+    '半仓抽本',
+    '抽本回款($)',
+    '结算价',
+    '总回款($)',
+    '净盈亏($)',
+    '状态',
+    '备注',
+  ];
+  const lines = rows.map((tr) =>
+    [
+      tr.id,
+      tr.windowLabel,
+      tr.windowStartSec ?? '',
+      tr.entryTime,
+      tr.side,
+      tr.entryPriceCents,
+      tr.betAmountUsd,
+      tr.initialShares,
+      tr.remainingShares,
+      tr.strikePrice,
+      tr.entrySpotPrice,
+      tr.reversalScoreAtEntry,
+      tr.stage1Triggered ? '是' : '否',
+      tr.stage1PayoutUsd,
+      tr.settlementPrice ?? '',
+      tr.finalPayoutUsd,
+      tr.netPnL,
+      getStatusMeta(tr.status).label,
+      tr.notes,
+    ]
+      .map(csvEscape)
+      .join(',')
+  );
+  // BOM so Excel opens Chinese headers correctly
+  return `\uFEFF${[headers.join(','), ...lines].join('\r\n')}`;
+}
+
+function downloadLedgerCsv(rows: SimTradeRecord[], filter: LedgerFilter): void {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const blob = new Blob([buildLedgerCsv(rows)], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `polysniper-ledger-${filter}-${stamp}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export const TradeLedgerTable: React.FC<TradeLedgerTableProps> = ({
@@ -73,6 +144,11 @@ export const TradeLedgerTable: React.FC<TradeLedgerTableProps> = ({
     }
     return true;
   });
+
+  const handleDownload = useCallback(() => {
+    if (filteredRows.length === 0) return;
+    downloadLedgerCsv(filteredRows, filter);
+  }, [filteredRows, filter]);
 
   return (
     <section
@@ -157,6 +233,18 @@ export const TradeLedgerTable: React.FC<TradeLedgerTableProps> = ({
                 </button>
               ))}
             </div>
+
+            {filteredRows.length > 0 && (
+              <button
+                type="button"
+                onClick={handleDownload}
+                title={`导出当前筛选的 ${filteredRows.length} 笔为 CSV`}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 rounded-lg transition-colors whitespace-nowrap shrink-0"
+              >
+                <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>下载 CSV ({filteredRows.length})</span>
+              </button>
+            )}
 
             {tradeLedger.length > 0 && (
               <button
